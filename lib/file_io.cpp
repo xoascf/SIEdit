@@ -37,7 +37,7 @@ bool FileHandle::Open(const char *path, Mode mode)
                          mode == ModeRead ? GENERIC_READ : GENERIC_WRITE,
                          FILE_SHARE_READ,
                          NULL,
-                         mode == ModeRead ? OPEN_EXISTING : CREATE_NEW,
+                         mode == ModeRead ? OPEN_EXISTING : CREATE_ALWAYS,
                          FILE_ATTRIBUTE_NORMAL,
                          NULL);
   m_Mode = mode;
@@ -75,7 +75,7 @@ bool FileHandle::Open(const wchar_t *path, Mode mode)
                          mode == ModeRead ? GENERIC_READ : GENERIC_WRITE,
                          FILE_SHARE_READ,
                          NULL,
-                         mode == ModeRead ? OPEN_EXISTING : CREATE_NEW,
+                         mode == ModeRead ? OPEN_EXISTING : CREATE_ALWAYS,
                          FILE_ATTRIBUTE_NORMAL,
                          NULL);
   m_Mode = mode;
@@ -111,13 +111,18 @@ uint64_t FileHandle::GetPosition() const
   // Desktop Windows: Use SetFilePointer
   LONG high = 0;
   DWORD low = SetFilePointer((HANDLE)m_Handle, 0, &high, FILE_CURRENT);
+  if (low == INVALID_SET_FILE_POINTER && GetLastError() != NO_ERROR) {
+    return 0;
+  }
   return (uint64_t(high) << 32) | low;
 #else
   // UWP/Xbox and non-Windows: Use stream tell
   if (m_Mode == ModeRead) {
-    return FSTR(m_Handle)->tellg();
+    std::streampos pos = FSTR(m_Handle)->tellg();
+    return (pos != std::streampos(-1)) ? static_cast<uint64_t>(pos) : 0;
   } else {
-    return FSTR(m_Handle)->tellp();
+    std::streampos pos = FSTR(m_Handle)->tellp();
+    return (pos != std::streampos(-1)) ? static_cast<uint64_t>(pos) : 0;
   }
 #endif
 }
@@ -128,6 +133,9 @@ uint64_t FileHandle::GetSize() const
   // Desktop Windows: Use GetFileSize
   DWORD high;
   DWORD low = GetFileSize((HANDLE)m_Handle, &high);
+  if (low == INVALID_FILE_SIZE && GetLastError() != NO_ERROR) {
+    return 0;
+  }
   return (uint64_t(high) << 32) | low;
 #else
   // UWP/Xbox and non-Windows: Calculate size using seek
@@ -135,16 +143,22 @@ uint64_t FileHandle::GetSize() const
   std::streampos currentPos;
   if (m_Mode == ModeRead) {
     currentPos = FSTR(m_Handle)->tellg();
+    if (currentPos == std::streampos(-1)) return 0;
+    
     FSTR(m_Handle)->seekg(0, std::ios::end);
     std::streampos size = FSTR(m_Handle)->tellg();
     FSTR(m_Handle)->seekg(currentPos);
-    return static_cast<uint64_t>(size);
+    
+    return (size != std::streampos(-1)) ? static_cast<uint64_t>(size) : 0;
   } else {
     currentPos = FSTR(m_Handle)->tellp();
+    if (currentPos == std::streampos(-1)) return 0;
+    
     FSTR(m_Handle)->seekp(0, std::ios::end);
     std::streampos size = FSTR(m_Handle)->tellp();
     FSTR(m_Handle)->seekp(currentPos);
-    return static_cast<uint64_t>(size);
+    
+    return (size != std::streampos(-1)) ? static_cast<uint64_t>(size) : 0;
   }
 #endif
 }
@@ -172,7 +186,12 @@ void FileHandle::Seek(uint64_t position, SeekMode seekMode)
     break;
   }
   
-  SetFilePointer((HANDLE)m_Handle, low, &high, moveMethod);
+  DWORD result = SetFilePointer((HANDLE)m_Handle, low, &high, moveMethod);
+  // Check for error only if result is INVALID_SET_FILE_POINTER and GetLastError reports an error
+  if (result == INVALID_SET_FILE_POINTER && GetLastError() != NO_ERROR) {
+    // Seek failed, but we cannot report errors from this void function
+    // The next read/write operation will likely fail
+  }
 #else
   // UWP/Xbox and non-Windows: Use stream seek
   std::ios::seekdir dir;
@@ -203,14 +222,25 @@ uint64_t FileHandle::Read(void *buffer, uint64_t size)
 {
 #if defined(_WIN32) && SIEDIT_WIN_DESKTOP
   // Desktop Windows: Use ReadFile
-  DWORD bytesRead;
-  ReadFile((HANDLE)m_Handle, buffer, (DWORD)size, &bytesRead, NULL);
+  DWORD bytesRead = 0;
+  if (!ReadFile((HANDLE)m_Handle, buffer, (DWORD)size, &bytesRead, NULL)) {
+    return 0;  // Read failed
+  }
   return bytesRead;
 #else
   // UWP/Xbox and non-Windows: Use stream read
   std::streampos before = FSTR(m_Handle)->tellg();
+  if (before == std::streampos(-1)) return 0;
+  
   FSTR(m_Handle)->read((char*)buffer, size);
-  return static_cast<uint64_t>(FSTR(m_Handle)->tellg() - before);
+  
+  std::streampos after = FSTR(m_Handle)->tellg();
+  if (after == std::streampos(-1)) {
+    // EOF or error occurred, return what was actually read
+    return static_cast<uint64_t>(FSTR(m_Handle)->gcount());
+  }
+  
+  return static_cast<uint64_t>(after - before);
 #endif
 }
 
@@ -218,14 +248,25 @@ uint64_t FileHandle::Write(const void *buffer, uint64_t size)
 {
 #if defined(_WIN32) && SIEDIT_WIN_DESKTOP
   // Desktop Windows: Use WriteFile
-  DWORD bytesWritten;
-  WriteFile((HANDLE)m_Handle, buffer, (DWORD)size, &bytesWritten, NULL);
+  DWORD bytesWritten = 0;
+  if (!WriteFile((HANDLE)m_Handle, buffer, (DWORD)size, &bytesWritten, NULL)) {
+    return 0;  // Write failed
+  }
   return bytesWritten;
 #else
   // UWP/Xbox and non-Windows: Use stream write
   std::streampos before = FSTR(m_Handle)->tellp();
+  if (before == std::streampos(-1)) return 0;
+  
   FSTR(m_Handle)->write((const char*)buffer, size);
-  return static_cast<uint64_t>(FSTR(m_Handle)->tellp() - before);
+  if (FSTR(m_Handle)->fail()) {
+    return 0;  // Write failed
+  }
+  
+  std::streampos after = FSTR(m_Handle)->tellp();
+  if (after == std::streampos(-1)) return 0;
+  
+  return static_cast<uint64_t>(after - before);
 #endif
 }
 
