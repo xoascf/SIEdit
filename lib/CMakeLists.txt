@@ -3,9 +3,11 @@ option(LIBWEAVER_BUILD_DOXYGEN "Build Doxygen documentation" OFF)
 set(LIBWEAVER_HEADERS
   ${PROJECT_SOURCE_DIR}/include/libweaver/core.h
   ${PROJECT_SOURCE_DIR}/include/libweaver/file.h
+  ${PROJECT_SOURCE_DIR}/include/libweaver/file_io.h
   ${PROJECT_SOURCE_DIR}/include/libweaver/info.h
   ${PROJECT_SOURCE_DIR}/include/libweaver/interleaf.h
   ${PROJECT_SOURCE_DIR}/include/libweaver/object.h
+  ${PROJECT_SOURCE_DIR}/include/libweaver/platform_win.h
   ${PROJECT_SOURCE_DIR}/include/libweaver/sitypes.h
   ${PROJECT_SOURCE_DIR}/include/libweaver/types.h
   ${PROJECT_SOURCE_DIR}/include/libweaver/util.h
@@ -14,6 +16,7 @@ set(LIBWEAVER_HEADERS
 set(LIBWEAVER_SOURCES
   core.cpp
   file.cpp
+  file_io.cpp
   interleaf.cpp
   object.cpp
   sitypes.cpp
