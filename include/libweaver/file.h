@@ -81,7 +81,6 @@ public:
 
 private:
   void *m_Handle;
-  Mode m_Mode;
 
 };
 

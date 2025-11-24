@@ -1,11 +1,6 @@
 #include "file.h"
+#include "file_io.h"
 
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <fstream>
-#define FSTR(x) static_cast<std::fstream*>(x)
-#endif
 #include <algorithm>
 
 namespace si {
@@ -17,158 +12,92 @@ File::File()
 
 bool File::Open(const char *c, Mode mode)
 {
-#ifdef _WIN32
-  m_Handle = CreateFileA(c,
-                         mode == Read ? GENERIC_READ : GENERIC_WRITE,
-                         FILE_SHARE_READ,
-                         NULL,
-                         mode == Read ? OPEN_EXISTING : CREATE_NEW,
-                         FILE_ATTRIBUTE_NORMAL,
-                         NULL);
-  m_Mode = mode;
-  return m_Handle != INVALID_HANDLE_VALUE;
-#else
-  std::ios::openmode m = std::ios::binary;
-
-  if (mode == Read) {
-    m |= std::ios::in;
-  } else {
-    m |= std::ios::out;
+  // Create FileHandle if needed
+  if (!m_Handle) {
+    m_Handle = new FileHandle();
   }
-
-  m_Handle = new std::fstream();
-  FSTR(m_Handle)->open(c, m);
-  if (FSTR(m_Handle)->good() && FSTR(m_Handle)->is_open()) {
-    m_Mode = mode;
-    return true;
-  }
-
-  return false;
-#endif
+  
+  FileHandle::Mode fhMode = (mode == Read) ? FileHandle::ModeRead : FileHandle::ModeWrite;
+  return static_cast<FileHandle*>(m_Handle)->Open(c, fhMode);
 }
 
 #ifdef _WIN32
 bool File::Open(const wchar_t *c, Mode mode)
 {
-  m_Handle = CreateFileW(c,
-                         mode == Read ? GENERIC_READ : GENERIC_WRITE,
-                         FILE_SHARE_READ,
-                         NULL,
-                         mode == Read ? OPEN_EXISTING : CREATE_NEW,
-                         FILE_ATTRIBUTE_NORMAL,
-                         NULL);
-  return m_Handle != INVALID_HANDLE_VALUE;
+  // Create FileHandle if needed
+  if (!m_Handle) {
+    m_Handle = new FileHandle();
+  }
+  
+  FileHandle::Mode fhMode = (mode == Read) ? FileHandle::ModeRead : FileHandle::ModeWrite;
+  return static_cast<FileHandle*>(m_Handle)->Open(c, fhMode);
 }
 #endif
 
 File::pos_t File::pos()
 {
-#ifdef _WIN32
-  LONG high = 0;
-  DWORD low = SetFilePointer(m_Handle, 0, &high, FILE_CURRENT);
-  return pos_t(high) << 32 | low;
-#else
-  if (m_Mode == Read) {
-    return FSTR(m_Handle)->tellg();
-  } else {
-    return FSTR(m_Handle)->tellp();
+  if (!m_Handle) {
+    return 0;
   }
-#endif
+  return static_cast<FileHandle*>(m_Handle)->GetPosition();
 }
 
 File::pos_t File::size()
 {
-#ifdef _WIN32
-  DWORD high;
-  DWORD low = GetFileSize(m_Handle, &high);
-  return pos_t(high) << 32 | low;
-#else
-  pos_t before = pos();
-  seek(0, SeekEnd);
-  pos_t sz = pos();
-  seek(before, SeekStart);
-  return sz;
-#endif
+  if (!m_Handle) {
+    return 0;
+  }
+  return static_cast<FileHandle*>(m_Handle)->GetSize();
 }
 
 void File::seek(File::pos_t p, SeekMode s)
 {
-#ifdef _WIN32
-  LONG high = p >> 32;
-  DWORD low = (DWORD) p;
-
-  DWORD m;
+  if (!m_Handle) {
+    return;
+  }
+  
+  FileHandle::SeekMode seekMode;
   switch (s) {
   case SeekStart:
-    m = FILE_BEGIN;
+    seekMode = FileHandle::SeekBegin;
     break;
   case SeekCurrent:
-    m = FILE_CURRENT;
+    seekMode = FileHandle::SeekCurrent;
     break;
   case SeekEnd:
-    m = FILE_END;
+    seekMode = FileHandle::SeekEnd;
+    break;
+  default:
+    seekMode = FileHandle::SeekBegin;
     break;
   }
-
-  SetFilePointer(m_Handle, low, &high, m);
-#else
-  std::ios::seekdir d = std::ios::beg;
-
-  switch (s) {
-  case SeekStart:
-    d = std::ios::beg;
-    break;
-  case SeekCurrent:
-    d = std::ios::cur;
-    break;
-  case SeekEnd:
-    d = std::ios::end;
-    break;
-  }
-
-  if (m_Mode == Read) {
-    FSTR(m_Handle)->seekg(p, d);
-  } else {
-    FSTR(m_Handle)->seekp(p, d);
-  }
-#endif
+  
+  static_cast<FileHandle*>(m_Handle)->Seek(p, seekMode);
 }
 
 void File::Close()
 {
-#ifdef _WIN32
-  CloseHandle(m_Handle);
-#else
-  FSTR(m_Handle)->close();
-  delete FSTR(m_Handle);
-  m_Handle = NULL;
-#endif
+  if (m_Handle) {
+    static_cast<FileHandle*>(m_Handle)->Close();
+    delete static_cast<FileHandle*>(m_Handle);
+    m_Handle = NULL;
+  }
 }
 
 File::pos_t File::ReadData(void *data, File::pos_t size)
 {
-#ifdef _WIN32
-  DWORD r;
-  ReadFile(m_Handle, data, (DWORD) size, &r, NULL);
-  return r;
-#else
-  pos_t before = this->pos();
-  FSTR(m_Handle)->read((char *) data, size);
-  return this->pos() - before;
-#endif
+  if (!m_Handle) {
+    return 0;
+  }
+  return static_cast<FileHandle*>(m_Handle)->Read(data, size);
 }
 
 File::pos_t File::WriteData(const void *data, File::pos_t size)
 {
-#ifdef _WIN32
-  DWORD w;
-  WriteFile(m_Handle, data, (DWORD) size, &w, NULL);
-  return w;
-#else
-  pos_t before = this->pos();
-  FSTR(m_Handle)->write((const char *) data, size);
-  return this->pos() - before;
-#endif
+  if (!m_Handle) {
+    return 0;
+  }
+  return static_cast<FileHandle*>(m_Handle)->Write(data, size);
 }
 
 uint8_t FileBase::ReadU8()
